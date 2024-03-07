@@ -368,6 +368,9 @@ pub struct EbpfYamlConfig {
     #[serde(with = "humantime_serde")]
     pub io_event_minimal_duration: Duration,
     pub on_cpu_profile: OnCpuProfile,
+    pub syscall_out_of_order_cache_size: usize,
+    pub syscall_out_of_order_reassembly: Vec<String>,
+    pub syscall_segmentation_reassembly: Vec<String>,
 }
 
 impl Default for EbpfYamlConfig {
@@ -388,6 +391,9 @@ impl Default for EbpfYamlConfig {
             io_event_collect_mode: 1,
             io_event_minimal_duration: Duration::from_millis(1),
             on_cpu_profile: OnCpuProfile::default(),
+            syscall_out_of_order_reassembly: vec![],
+            syscall_segmentation_reassembly: vec![],
+            syscall_out_of_order_cache_size: 16,
         }
     }
 }
@@ -723,6 +729,11 @@ impl YamlConfig {
             c.ebpf
                 .on_cpu_profile
                 .java_symbol_file_refresh_defer_interval = Duration::from_secs(600)
+        }
+        if c.ebpf.syscall_out_of_order_cache_size < 8
+            || c.ebpf.syscall_out_of_order_cache_size > 128
+        {
+            c.ebpf.syscall_out_of_order_cache_size = 16;
         }
 
         if c.guard_interval < Duration::from_secs(1) || c.guard_interval > Duration::from_secs(3600)
