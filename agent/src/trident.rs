@@ -75,8 +75,8 @@ use crate::{
     },
     handler::{NpbBuilder, PacketHandlerBuilder},
     integration_collector::{
-        BoxedPrometheusExtra, MetricServer, OpenTelemetry, OpenTelemetryCompressed, Profile,
-        TelegrafMetric,
+        ApplicationLog, BoxedPrometheusExtra, MetricServer, OpenTelemetry, OpenTelemetryCompressed,
+        Profile, TelegrafMetric,
     },
     metric::document::BoxedDocument,
     monitor::Monitor,
@@ -1424,6 +1424,7 @@ pub struct AgentComponents {
     pub packet_sequence_uniform_output: DebugSender<BoxedPacketSequenceBlock>, // Enterprise Edition Feature: packet-sequence
     pub packet_sequence_uniform_sender: UniformSenderThread<BoxedPacketSequenceBlock>, // Enterprise Edition Feature: packet-sequence
     pub proc_event_uniform_sender: UniformSenderThread<BoxedProcEvents>,
+    pub application_log_uniform_sender: UniformSenderThread<ApplicationLog>,
     pub exception_handler: ExceptionHandler,
     pub proto_log_sender: DebugSender<BoxAppProtoLogsData>,
     pub pcap_batch_sender: DebugSender<BoxedPcapBatch>,
@@ -2194,6 +2195,27 @@ impl AgentComponents {
             exception_handler.clone(),
             true,
         );
+        let application_log_queue_name = "1-application-log-to-sender";
+        let (application_log_sender, application_log_receiver, counter) = queue::bounded_with_debug(
+            yaml_config.external_metrics_sender_queue_size,
+            application_log_queue_name,
+            &queue_debugger,
+        );
+        stats_collector.register_countable(
+            &QueueStats {
+                module: application_log_queue_name,
+                ..Default::default()
+            },
+            Countable::Owned(Box::new(counter)),
+        );
+        let application_log_uniform_sender = UniformSenderThread::new(
+            application_log_queue_name,
+            Arc::new(application_log_receiver),
+            config_handler.sender(),
+            stats_collector.clone(),
+            exception_handler.clone(),
+            true,
+        );
 
         let ebpf_dispatcher_id = dispatcher_components.len();
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -2432,6 +2454,7 @@ impl AgentComponents {
             prometheus_sender,
             telegraf_sender,
             profile_sender,
+            application_log_sender,
             candidate_config.metric_server.port,
             exception_handler.clone(),
             candidate_config.metric_server.compressed,
@@ -2449,6 +2472,9 @@ impl AgentComponents {
             candidate_config
                 .yaml_config
                 .external_metric_integration_disabled,
+            candidate_config
+                .yaml_config
+                .external_log_integration_disabled,
         );
 
         stats_collector.register_countable(
@@ -2502,6 +2528,7 @@ impl AgentComponents {
             telegraf_uniform_sender,
             profile_uniform_sender,
             proc_event_uniform_sender,
+            application_log_uniform_sender,
             tap_mode: candidate_config.tap_mode,
             packet_sequence_uniform_output, // Enterprise Edition Feature: packet-sequence
             packet_sequence_uniform_sender, // Enterprise Edition Feature: packet-sequence
@@ -2592,6 +2619,7 @@ impl AgentComponents {
             self.telegraf_uniform_sender.start();
             self.profile_uniform_sender.start();
             self.proc_event_uniform_sender.start();
+            self.application_log_uniform_sender.start();
             if self.config.metric_server.enabled {
                 self.metrics_server_component.start();
             }
@@ -2660,6 +2688,9 @@ impl AgentComponents {
             join_handles.push(h);
         }
         if let Some(h) = self.pcap_batch_uniform_sender.notify_stop() {
+            join_handles.push(h);
+        }
+        if let Some(h) = self.application_log_uniform_sender.notify_stop() {
             join_handles.push(h);
         }
         // Enterprise Edition Feature: packet-sequence
