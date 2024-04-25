@@ -178,7 +178,7 @@ var codecTypeString = []string{
 	CodecDefault:     "",
 	CodecLZ4:         "LZ4",
 	CodecLZ4HC:       "LZ4HC",
-	CodecZSTD:        "ZSTD",
+	CodecZSTD:        "ZSTD(1)",
 	CodecT64:         "T64",
 	CodecDelta:       "Delta",
 	CodecDoubleDelta: "DoubleDelta",

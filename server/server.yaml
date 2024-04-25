@@ -564,6 +564,22 @@ ingester:
   ## prometheus cache expiration of label ids. uint: s
   #prometheus-label-cache-expiration: 86400
 
+
+  ## app log data writer config
+  #app-log-ck-writer:
+  #  queue-count: 1      # parallelism of table writing
+  #  queue-size: 50000   # size of writing queue
+  #  batch-size: 25600   # size of batch writing
+  #  flush-timeout: 5   # timeout of table writing
+
+  ## app log decoder queue count/size
+  #app-log-decoder-queue-count: 1
+  #app-log-decoder-queue-size: 16384
+
+  ## app log database data retention time(unit: hour)
+  ## Note: This configuration is only valid when DeepFlow is run for the first time or the ClickHouse tables have not yet been created
+  #app-log-ttl-hour: 168
+
   #ck-disk-monitor:
   #  check-interval: 180 # check time interval (unit: seconds)
   #  ttl-check-disabled: false # whether to not check TTL expired data
