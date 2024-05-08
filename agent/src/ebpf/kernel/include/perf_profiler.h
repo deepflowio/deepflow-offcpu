@@ -51,4 +51,22 @@ struct stack_trace_key_t {
 	__u64 timestamp;
 };
 
+typedef struct {
+	char class_name[32];
+	char method_name[64];
+	char path[128];
+} symbol_t;
+
+#define MAX_STACK_DEPTH 20
+
+typedef struct {
+	__u32 pid;
+	__u32 tid;
+	__u64 addresses[MAX_STACK_DEPTH];
+
+	__u64 frame_ptr;
+	__u64 this_ptr;
+	char err[16];
+} pyperf_stack_t;
+
 #endif /* DF_BPF_PERF_PROFILER_H */

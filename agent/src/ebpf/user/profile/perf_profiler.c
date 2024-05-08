@@ -1104,6 +1104,81 @@ exit:
 	pthread_exit(NULL);
 }
 
+static pthread_t pyperf_reader_thread;
+
+static void pyperf_reader_lost_cb(void *cookie, u64 lost)
+{
+}
+
+static void pyperf_reader_raw_cb(void *cookie, void *raw, int raw_size)
+{
+	if (unlikely(profiler_stop == 1))
+		return;
+
+	struct reader_forward_info *fwd_info = cookie;
+	if (unlikely(fwd_info->queue_id != 0)) {
+		ebpf_warning("cookie(%d) error", (u64)cookie);
+		return;
+	}
+
+	symbol_t symbols[512];
+	__u32 symbol_ids[512];
+	char buffer[8192];
+
+	pyperf_stack_t *v = (pyperf_stack_t *)raw;
+	if (strlen(v->err) > 0) {
+		ebpf_info("pid=%d, err=%s, this_ptr=%lu", v->pid, v->err, v->this_ptr);
+	} else {
+		ebpf_info("pid=%d, tid=%lu, frame_ptr=%lu, this_ptr=%lu", v->pid, v->tid, v->frame_ptr, v->this_ptr);
+
+		struct bpf_tracer *tracer = profiler_tracer;
+		struct ebpf_map *map = ebpf_obj__get_map_by_name(tracer->obj, "__python_symbols");
+		int fd = map->fd;
+
+		symbol_t key = {};
+		int n = 0;
+		while (bpf_get_next_key(fd, &key, &symbols[n]) == 0) {
+			int ret = bpf_lookup_elem(fd, &symbols[n], &symbol_ids[n]);
+			key = symbols[n];
+			if (ret == 0) {
+				n++;
+			}
+		}
+
+		int offset = 0;
+
+		for (int i = 0; i < MAX_STACK_DEPTH; i++) {
+			__u64 *addr = &v->addresses[i];
+			if (*addr == 0) {
+				continue;
+			}
+			__u32 lineno = *addr >> 32;
+			__u32 symbol_id = *addr & 0xFFFF;
+			for (int j = 0; j < n; j++) {
+				if (symbol_ids[j] == symbol_id) {
+					symbol_t *s = &symbols[j];
+					offset += snprintf(buffer + offset, 8192 - offset, "%d: %s.%s\n\tat %s:%d\n", i, s->class_name, s->method_name, s->path, lineno);
+				}
+			}
+		}
+		ebpf_info("stack trace:\n%s", buffer);
+	}
+}
+
+static void pyperf_reader_work(void *arg)
+{
+	struct bpf_perf_reader *r = (struct bpf_perf_reader *)arg;
+
+	struct epoll_event events[r->readers_count];
+
+	while (1) {
+		int nfds = reader_epoll_wait(r, events, 0);
+		if (nfds > 0) {
+			reader_event_read(events, nfds);
+		}
+	}
+}
+
 static int create_profiler(struct bpf_tracer *tracer)
 {
 	int ret;
@@ -1143,6 +1218,18 @@ static int create_profiler(struct bpf_tracer *tracer)
 		return ETR_NORESOURCE;
 	}
 
+	struct bpf_perf_reader *pyperf_reader = create_perf_buffer_reader(tracer,
+					     "__python_stack_output",
+					     pyperf_reader_raw_cb,
+					     pyperf_reader_lost_cb,
+					     PROFILE_PG_CNT_DEF, 1,
+					     PROFILER_READER_EPOLL_TIMEOUT);
+	if (pyperf_reader == NULL) {
+		free_perf_buffer_reader(reader_a);
+		free_perf_buffer_reader(reader_b);
+		return ETR_NORESOURCE;
+	}
+
 	/* clear old perf files */
 	exec_command("/usr/bin/rm -rf /tmp/perf-*.map", "");
 	exec_command("/usr/bin/rm -rf /tmp/perf-*.log", "");
@@ -1153,7 +1240,13 @@ static int create_profiler(struct bpf_tracer *tracer)
 	ret = create_work_thread("java_update",
 				 &java_syms_update_thread,
 				 (void *)java_syms_update_work, (void *)tracer);
+	if (ret) {
+		goto error;
+	}
 
+	ret = create_work_thread("pyperf_reader",
+				 &pyperf_reader_thread,
+				 (void *)pyperf_reader_work, (void *)pyperf_reader);
 	if (ret) {
 		goto error;
 	}
