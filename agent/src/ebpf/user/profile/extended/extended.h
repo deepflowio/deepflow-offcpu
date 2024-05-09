@@ -17,6 +17,4 @@
 #ifndef DF_PROFILE_EXT_H
 #define DF_PROFILE_EXT_H
 
-#include "offcpu.h"
-
 #endif /* DF_PROFILE_EXT_H */
